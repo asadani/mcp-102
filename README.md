@@ -7,12 +7,16 @@ to see each boundary: model, host, MCP, authorization and product API.
 The main path targets MCP `2026-07-28` and `@modelcontextprotocol/*` v2. The
 course requires Node 22+. No model key or cloud account is required.
 
+## Interactive tutorial
+
+Read the hosted course at **[tech.anujsadani.in/mcp-102](https://tech.anujsadani.in/mcp-102/)**. The repository root is the tutorial page; the runnable Teamspace product remains available locally at `http://127.0.0.1:5173/app.html`.
+
 ## Run it
 
 ```powershell
 npm install
 npm run dev       # API + MCP at http://127.0.0.1:3102
-npm run ui        # UI at http://127.0.0.1:5173
+npm run ui        # tutorial at /, product UI at /app.html
 ```
 
 Use `alice`, `bob`, `viewer`, `sam`, and `eve` in the identity switcher. These
