@@ -9,7 +9,7 @@ course requires Node 22+. No model key or cloud account is required.
 
 ## Interactive tutorial
 
-Read the hosted course at **[tech.anujsadani.in/mcp-102](https://tech.anujsadani.in/mcp-102/)**. The repository root is the tutorial page; the runnable Teamspace product remains available locally at `http://127.0.0.1:5173/app.html`.
+Read the hosted course at **[tech.anujsadani.in/mcp-102](https://tech.anujsadani.in/mcp-102/)**. The repository root is the tutorial page, a single self-contained `index.html` in the same format as MCP 101 (no build step; every JSON-RPC frame on it was captured from this repository’s running server, and every code excerpt is pulled from `src/`); the runnable Teamspace product remains available locally at `http://127.0.0.1:5173/app.html`.
 
 ## Run it
 
@@ -91,3 +91,13 @@ that compatibility path is identified as legacy in the lesson.
 Protocol-sensitive lessons are checked against the MCP
 [`2026-07-28` release notes](https://blog.modelcontextprotocol.io/posts/2026-07-28/)
 and the [TypeScript SDK v2 protocol guide](https://ts.sdk.modelcontextprotocol.io/v2/protocol-versions).
+
+## Operational notes
+
+- **`GET /healthz`** answers 200 after a `SELECT 1`, or 503 if the database is unreachable. It needs no token, so a container or load-balancer health check can use it.
+- **`/mcp` challenges instead of failing.** A missing, invalid, expired or wrong-audience token gets `401` with `WWW-Authenticate: Bearer resource_metadata="…/.well-known/oauth-protected-resource"`. The check (`requireToken` in `src/auth.ts`) runs in Express *before* the MCP handler: an error thrown inside the handler factory is reported by the SDK as a 500, which would hide the challenge from the client.
+- **Demo data is development-only.** Members and tasks are seeded unless `NODE_ENV=production`; set `SEED_DEMO_DATA=1` to opt in deliberately.
+- **Operation keys survive only unknown failures.** In `once()`, a definite refusal (a `Fault`: stale version, missing approval) releases the key so the caller can correct the call and retry with the same key. Any other error keeps the claim and the next call sees `OUTCOME_UNKNOWN`, which means inspect before acting.
+- **A refused resource read is a structured not-found.** `resources/read` for a page that is missing, in another team or in another organisation answers with the SDK’s `ResourceNotFoundError` (JSON-RPC `-32602`, with the URI in `data`), never a bare internal error.
+- **The circuit breaker guards the product APIs.** `Downstream` keeps one breaker per API. It counts only outages (unreachable, 5xx, blown deadlines), never a definite refusal such as `NOT_FOUND`.
+- **Production needs its settings.** With `NODE_ENV=production` the server refuses to start unless `DATABASE_URL`, `TOKEN_SECRET` and `PUBLIC_ORIGIN` are set.

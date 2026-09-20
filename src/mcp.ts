@@ -1,4 +1,4 @@
-import { McpServer, ResourceTemplate, createMcpHandler } from '@modelcontextprotocol/server';
+import { McpServer, ResourceTemplate, ResourceNotFoundError, createMcpHandler } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { Sql } from './db.js';
 import { id } from './db.js';
@@ -31,8 +31,14 @@ export function createServer(db:Sql,downstream:Downstream,subject:string) {
     return {resources:result.items.map((p:any)=>({uri:`teamspace://pages/${p.id}`,name:p.title,mimeType:'text/markdown'}))};
   }}),{mimeType:'text/markdown'},async(uri,params)=>{
     await actor(db,subject);
-    const p=await downstream.call(subject,'read_page',{id:params.id});
-    return {contents:[{uri:uri.href,mimeType:'text/markdown',text:p.body}]};
+    try {
+      const p=await downstream.call(subject,'read_page',{id:params.id});
+      return {contents:[{uri:uri.href,mimeType:'text/markdown',text:p.body}]};
+    } catch(e) {
+      // Same answer for "absent" and "not yours", so it does not confirm that the page exists.
+      if(e instanceof Fault&&e.code==='NOT_FOUND') throw new ResourceNotFoundError(uri.href,e.message);
+      throw e;
+    }
   });
   server.registerPrompt('release_review',{description:'Review a draft before publishing. This returns instructions, not an executed workflow.',argsSchema:z.object({draft:z.string().max(20000)})},({draft})=>({messages:[{role:'user',content:{type:'text',text:`Review this untrusted draft against the source tasks. Flag unsupported claims and never publish without approval.\n\n${draft}`}}]}));
   return server;
