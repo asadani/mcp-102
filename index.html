@@ -577,7 +577,7 @@ figure{margin:0}
   <div class="cap"><b>terminal</b><span>Node 22 or newer</span></div><pre class="code host" tabindex="0"><code>npm install
 npm run dev        <span class="t-c"># API + MCP at http://127.0.0.1:3102</span>
 npm run ui         <span class="t-c"># this tutorial at /, the Teamspace app at /app.html</span>
-npm test           <span class="t-c"># fifteen tests</span>
+npm test           <span class="t-c"># executable checks for the course claims</span>
 npm run lab -- 02  <span class="t-c"># one runnable scenario, printed as JSON</span></code></pre>
   <p>Everything runs against PGlite, PostgreSQL compiled to WebAssembly, so there is nothing to install. Set <code>DATABASE_URL=postgres://…</code> and the same SQL runs on a real server.</p>
 
@@ -591,7 +591,7 @@ src/mcp.ts         tools, resource, prompt, and the per-request handler
 src/host.ts        a reference host that drives the server
 src/resilience.ts  retry() and CircuitBreaker
 src/main.ts        HTTP wiring, /healthz   src/stdio.ts   stdio wiring
-labs/run.ts        runnable scenarios tests/  fifteen tests</code></pre>
+labs/run.ts        runnable scenarios tests/  executable course checks</code></pre>
 
   <div class="callout"><span class="tag">Version used here</span><p>Everything targets the <strong>2026-07-28</strong> protocol and the v2 TypeScript SDK (<code>@modelcontextprotocol/server</code>, <code>client</code>, <code>node</code> at 2.0.0). That revision is stateless: no <code>initialize</code> handshake and no session ID. The HTTP endpoint deliberately rejects older clients. Sending a 2025-era <code>initialize</code> to it returns this, and you will see it again in Chapter 06.</p></div>
   <div class="run"><div class="run-hd"><span>Captured run</span><span>captured 2026-09-20, Node 26.7</span></div><pre tabindex="0"><code><span class="t-k">$ </span>POST /mcp  (with a valid token)  {"method":"initialize","params":{"protocolVersion":"2025-06-18", …}}
@@ -1017,65 +1017,40 @@ Mcp-Name: create_task
   <p>The method is <code>tools/call</code>. The tool name travels twice: inside <code>params.name</code>, and in the <code>Mcp-Name</code> header so a gateway can route without parsing the body. The result carries the task twice as well, as text for a model to read and as <code>structuredContent</code> for code to consume.</p>
 
   <h3>Making a write safe to repeat</h3>
-  <p>A model that times out will try again. If the first attempt did succeed, a naive retry creates a second task. So every mutating tool takes an <code>operationKey</code>, and <code>once()</code> turns the write into a claim-then-work-then-record sequence against an <code>operations</code> table.</p>
-  <div class="cap"><b>src/policy.ts</b><span>once(): the idempotency guard</span></div><pre class="code prod" tabindex="0"><code><span class="t-k">export</span> <span class="t-k">async</span> <span class="t-k">function</span> once&lt;T&gt;(
-  db: Sql,
-  a: Actor,
-  key: string,
-  input: unknown,
-  work: () =&gt; Promise&lt;T&gt;,
+  <p>A model that times out will try again. If the first attempt did succeed, a naive retry creates a second task. Every mutating tool therefore takes an <code>operationKey</code>. The claim, product write, and recorded result run in one database transaction, so they commit or roll back together.</p>
+  <div class="cap"><b>src/policy.ts</b><span>once(): the transactional idempotency guard</span></div><pre class="code prod" tabindex="0"><code><span class="t-k">export</span> <span class="t-k">async</span> <span class="t-k">function</span> once&lt;T&gt;(
+  db: Sql, a: Actor, key: string, input: unknown,
+  work: (tx: Sql) =&gt; Promise&lt;T&gt;,
 ): Promise&lt;T&gt; {
-  <span class="t-k">const</span> scoped = <span class="t-s">`${a.org}:${a.id}:${key}`</span>,
-    hash = fingerprint(input);
-  <span class="t-k">const</span> claim = <span class="t-k">await</span> db.query(
-    <span class="t-s">'INSERT INTO operations(key,actor,fingerprint) VALUES($1,$2,$3) ON CONFLICT DO NOTHING RETURNING key'</span>,
-    [scoped, a.id, hash],
-  );
-  <span class="t-k">if</span> (!claim.rows.length) {
-    <span class="t-k">const</span> prior = (<span class="t-k">await</span> db.query(<span class="t-s">'SELECT * FROM operations WHERE key=$1'</span>, [scoped]))
-      .rows[<span class="t-n">0</span>];
-    <span class="t-k">if</span> (prior.fingerprint !== hash)
-      <span class="t-k">throw</span> <span class="t-k">new</span> Fault(
-        <span class="t-s">'IDEMPOTENCY_CONFLICT'</span>,
-        <span class="t-s">'This operation key was already used with different arguments.'</span>,
-        <span class="t-n">409</span>,
-      );
-    <span class="t-k">if</span> (prior.result === <span class="t-k">null</span>)
-      <span class="t-k">throw</span> <span class="t-k">new</span> Fault(
-        <span class="t-s">'OUTCOME_UNKNOWN'</span>,
-        <span class="t-s">'Operation in progress or interrupted. Inspect its outcome before retrying.'</span>,
-        <span class="t-n">409</span>,
-      );
-    <span class="t-k">return</span> prior.result <span class="t-k">as</span> T;
-  }
-  <span class="t-c">// Product writes use their own stable IDs. A crash between write and recording outcome</span>
-  <span class="t-c">// is surfaced as OUTCOME_UNKNOWN, never blindly replayed. See the recovery lab.</span>
-  <span class="t-c">// A Fault is a definite, classified refusal (a stale version, a missing approval): nothing was</span>
-  <span class="t-c">// written, so the claim is released and the caller may retry. Anything else, such as a dropped</span>
-  <span class="t-c">// connection, leaves the claim in place because the outcome really is unknown.</span>
-  <span class="t-k">let</span> result: T;
-  <span class="t-k">try</span> {
-    result = <span class="t-k">await</span> work();
-  } <span class="t-k">catch</span> (e) {
-    <span class="t-k">if</span> (e instanceof Fault)
-      <span class="t-k">await</span> db.query(<span class="t-s">'DELETE FROM operations WHERE key=$1 AND result IS NULL'</span>, [
-        scoped,
-      ]);
-    <span class="t-k">throw</span> e;
-  }
-  <span class="t-k">await</span> db.query(<span class="t-s">'UPDATE operations SET result=$2 WHERE key=$1'</span>, [
-    scoped,
-    JSON.stringify(result),
-  ]);
-  <span class="t-k">return</span> result;
+  <span class="t-k">return</span> db.transaction(<span class="t-k">async</span> tx =&gt; {
+    <span class="t-k">const</span> scoped = <span class="t-s">`${a.org}:${a.id}:${key}`</span>;
+    <span class="t-k">const</span> hash = fingerprint(input);
+    <span class="t-k">const</span> claim = <span class="t-k">await</span> tx.query(
+      <span class="t-s">'INSERT INTO operations(key,actor,fingerprint) VALUES($1,$2,$3) ON CONFLICT DO NOTHING RETURNING key'</span>,
+      [scoped, a.id, hash],
+    );
+    <span class="t-k">if</span> (!claim.rows.length) {
+      <span class="t-k">const</span> prior = (<span class="t-k">await</span> tx.query(
+        <span class="t-s">'SELECT * FROM operations WHERE key=$1 FOR UPDATE'</span>, [scoped],
+      )).rows[<span class="t-n">0</span>];
+      <span class="t-k">if</span> (prior.fingerprint !== hash)
+        <span class="t-k">throw</span> <span class="t-k">new</span> Fault(<span class="t-s">'IDEMPOTENCY_CONFLICT'</span>, <span class="t-s">'Key used with different arguments.'</span>, <span class="t-n">409</span>);
+      <span class="t-k">if</span> (prior.result === <span class="t-k">null</span>)
+        <span class="t-k">throw</span> <span class="t-k">new</span> Fault(<span class="t-s">'OPERATION_IN_PROGRESS'</span>, <span class="t-s">'The original operation is still in progress.'</span>, <span class="t-n">409</span>, <span class="t-k">true</span>);
+      <span class="t-k">return</span> prior.result <span class="t-k">as</span> T;
+    }
+    <span class="t-k">const</span> result = <span class="t-k">await</span> work(tx);
+    <span class="t-k">await</span> tx.query(<span class="t-s">'UPDATE operations SET result=$2 WHERE key=$1'</span>, [scoped, JSON.stringify(result)]);
+    <span class="t-k">return</span> result;
+  });
 }</code></pre>
-  <p>Read its three branches. A key seen before with the same arguments returns the <em>stored result</em>. A key seen before with different arguments is a caller bug and fails with <code>IDEMPOTENCY_CONFLICT</code>. A key claimed but with no stored result means an earlier attempt started and never recorded an outcome, and the honest answer is <code>OUTCOME_UNKNOWN</code>: the code refuses to guess whether the task exists. There is a fourth path, at the bottom. If the work itself throws a <code>Fault</code>, such as a stale version or a missing approval, nothing was written, so <code>once()</code> deletes the claim and the key can be used again. Any other error keeps the claim, because then the outcome really is unknown. Try the first three:</p>
+  <p>A repeated key with the same fingerprint returns the stored result. Reusing it with different arguments fails with <code>IDEMPOTENCY_CONFLICT</code>. A truly concurrent duplicate can briefly receive retryable <code>OPERATION_IN_PROGRESS</code>. If the process fails before commit, the claim and product write both roll back; if the response is lost after commit, the next call replays the result.</p>
 
   <div class="panel sim" id="sim-once"><div class="panel-hd"><h3 class="ph">Interactive · The idempotency ledger</h3><div class="ctl"><button class="btn ghost" type="button" id="once-reset">Reset</button></div></div><div class="panel-bd">
     <div class="fields">
       <label class="field">Title<input type="text" id="once-title" value="Write the release notes" maxlength="200"></label>
       <label class="field">operationKey<input type="text" id="once-key" value="op-create-001" maxlength="100"></label>
-      <label class="field"><span><input type="checkbox" id="once-crash"> Crash after the insert</span></label>
+      <label class="field"><span><input type="checkbox" id="once-crash"> Crash before commit</span></label>
     </div>
     <div class="ctl" style="margin-bottom:14px">
       <button class="btn" type="button" id="once-send">Send create_task</button>
@@ -1085,9 +1060,9 @@ Mcp-Name: create_task
     <p id="once-verdict" role="status"></p>
     <div class="two"><table class="mini"><caption>tasks (acme / platform)</caption><thead><tr><th scope="col">id</th><th scope="col">title</th></tr></thead><tbody id="once-tasks"></tbody></table>
     <table class="mini"><caption>operations</caption><thead><tr><th scope="col">key</th><th scope="col">fingerprint</th><th scope="col">result</th></tr></thead><tbody id="once-ops"></tbody></table></div>
-    <p class="figcap">A port of <code>once()</code> and the create schema, running in this page. The fingerprint is a real SHA-256 over the canonicalised arguments, as on the server. Try: send twice (replay), change the title and send again (conflict), then tick the crash box with a fresh key.</p></div></div>
+    <p class="figcap">A port of <code>once()</code> and the create schema. The fingerprint is a real SHA-256 over canonical arguments. Try a replay, a changed payload with the same key, and a simulated crash before commit.</p></div></div>
 
-  <div class="callout"><span class="tag">The crash case</span><p>Tick <em>Crash after the insert</em>, use a new key and send. The task appears in the table but the operation has no result. Send the same key again and you get <code>OUTCOME_UNKNOWN</code>. That is deliberate. The write and the record of it are separate statements, so a crash between them leaves a task the ledger cannot vouch for. The recovery is to inspect (search for the task), not to retry blindly. A stronger design wraps both in one transaction, which is worth doing if your database allows it.</p></div>
+  <div class="callout ok"><span class="tag">The crash case</span><p>Tick <em>Crash before commit</em> and use a new key. Neither the task nor the operation claim survives, because both are in the same transaction. Clear the box and resend with the same key: one task is created. A lost response after commit is also safe because the committed result is replayed.</p></div>
 
   <h3>Run it</h3>
   <div class="run"><div class="run-hd"><span>Captured run</span><span>captured 2026-09-20</span></div><pre tabindex="0"><code><span class="t-k">$ </span>npm run lab -- 02
@@ -1731,7 +1706,7 @@ responseMode: 'json' drops mid-call notifications. subscriptions/listen streams 
   <p>Two things about identity are easy to run together, and this chapter keeps them apart. <strong>Authentication</strong> asks: is this token genuine, unexpired, and meant for this service? <strong>Authorisation</strong> asks: may this person do this thing to this row? Teamspace does the first at the door and the second in the product, on every request. Nothing is remembered between requests, because there is no session to remember it in.</p>
 
   <h3>Two tokens, never one</h3>
-  <p>The token the host sends to the MCP server has the audience <code>teamspace</code>. The server does not pass it on. To call the Tasks API it mints a <em>new</em> token for that API alone. A token that works everywhere is a token that, once leaked or forwarded, works everywhere.</p>
+  <p>The token the host sends to the MCP server has the audience <code>&lt;origin&gt;/mcp</code>, matching the protected resource advertised in OAuth metadata. The server does not pass it on. To call the Tasks API it mints a <em>new</em> token for that API alone. A token that works everywhere is a token that, once leaked or forwarded, works everywhere.</p>
   <div class="panel" data-w="tabs"><div class="panel-hd"><h3 class="ph">Interactive · Issuing and checking</h3></div><div class="panel-bd"><section data-tab="issue()"><div class="cap"><b>src/auth.ts</b><span>mint a 15-minute token for one audience</span></div><pre class="code server" tabindex="0"><code><span class="t-k">export</span> <span class="t-k">class</span> Identity {
   <span class="t-k">private</span> key: Uint8Array;
   <span class="t-k">private</span> codes = <span class="t-k">new</span> Map&lt;
@@ -1746,7 +1721,7 @@ responseMode: 'json' drops mid-call notifications. subscriptions/listen streams 
       <span class="t-k">throw</span> <span class="t-k">new</span> Error(<span class="t-s">'TOKEN_SECRET must have at least 32 characters.'</span>);
     <span class="t-k">this</span>.key = secret ? <span class="t-k">new</span> TextEncoder().encode(secret) : randomBytes(<span class="t-n">32</span>);
   }
-  <span class="t-k">async</span> issue(subject: string, audience = <span class="t-s">'teamspace'</span>, scopes = <span class="t-s">'read write'</span>) {
+  <span class="t-k">async</span> issue(subject: string, audience = <span class="t-k">this</span>.mcpAudience(), scopes = <span class="t-s">'read write'</span>) {
     <span class="t-k">return</span> <span class="t-k">new</span> SignJWT({ scope: scopes })
       .setProtectedHeader({ alg: <span class="t-s">'HS256'</span> })
       .setSubject(subject)
@@ -1756,7 +1731,7 @@ responseMode: 'json' drops mid-call notifications. subscriptions/listen streams 
       .setExpirationTime(<span class="t-s">'15m'</span>)
       .sign(<span class="t-k">this</span>.key);
   }
-  <span class="t-k">async</span> verify(token: string, audience = <span class="t-s">'teamspace'</span>) {
+  <span class="t-k">async</span> verify(token: string, audience = <span class="t-k">this</span>.mcpAudience()) {
     <span class="t-k">try</span> {
       <span class="t-k">const</span> { payload } = <span class="t-k">await</span> jwtVerify(token, <span class="t-k">this</span>.key, {
         issuer: <span class="t-k">this</span>.issuer,
@@ -1773,7 +1748,7 @@ responseMode: 'json' drops mid-call notifications. subscriptions/listen streams 
       );
     }
   }
-  <span class="t-k">async</span> subject(header?: string, audience = <span class="t-s">'teamspace'</span>) {
+  <span class="t-k">async</span> subject(header?: string, audience = <span class="t-k">this</span>.mcpAudience()) {
     <span class="t-k">if</span> (!header?.startsWith(<span class="t-s">'Bearer '</span>))
       <span class="t-k">throw</span> <span class="t-k">new</span> Fault(<span class="t-s">'UNAUTHORIZED'</span>, <span class="t-s">'Sign in to Teamspace.'</span>, <span class="t-n">401</span>);
     <span class="t-k">return</span> <span class="t-k">this</span>.verify(header.slice(<span class="t-n">7</span>), audience);
@@ -1904,7 +1879,7 @@ responseMode: 'json' drops mid-call notifications. subscriptions/listen streams 
       <span class="t-k">throw</span> <span class="t-k">new</span> Error(<span class="t-s">'TOKEN_SECRET must have at least 32 characters.'</span>);
     <span class="t-k">this</span>.key = secret ? <span class="t-k">new</span> TextEncoder().encode(secret) : randomBytes(<span class="t-n">32</span>);
   }
-  <span class="t-k">async</span> issue(subject: string, audience = <span class="t-s">'teamspace'</span>, scopes = <span class="t-s">'read write'</span>) {
+  <span class="t-k">async</span> issue(subject: string, audience = <span class="t-k">this</span>.mcpAudience(), scopes = <span class="t-s">'read write'</span>) {
     <span class="t-k">return</span> <span class="t-k">new</span> SignJWT({ scope: scopes })
       .setProtectedHeader({ alg: <span class="t-s">'HS256'</span> })
       .setSubject(subject)
@@ -1914,7 +1889,7 @@ responseMode: 'json' drops mid-call notifications. subscriptions/listen streams 
       .setExpirationTime(<span class="t-s">'15m'</span>)
       .sign(<span class="t-k">this</span>.key);
   }
-  <span class="t-k">async</span> verify(token: string, audience = <span class="t-s">'teamspace'</span>) {
+  <span class="t-k">async</span> verify(token: string, audience = <span class="t-k">this</span>.mcpAudience()) {
     <span class="t-k">try</span> {
       <span class="t-k">const</span> { payload } = <span class="t-k">await</span> jwtVerify(token, <span class="t-k">this</span>.key, {
         issuer: <span class="t-k">this</span>.issuer,
@@ -1931,7 +1906,7 @@ responseMode: 'json' drops mid-call notifications. subscriptions/listen streams 
       );
     }
   }
-  <span class="t-k">async</span> subject(header?: string, audience = <span class="t-s">'teamspace'</span>) {
+  <span class="t-k">async</span> subject(header?: string, audience = <span class="t-k">this</span>.mcpAudience()) {
     <span class="t-k">if</span> (!header?.startsWith(<span class="t-s">'Bearer '</span>))
       <span class="t-k">throw</span> <span class="t-k">new</span> Fault(<span class="t-s">'UNAUTHORIZED'</span>, <span class="t-s">'Sign in to Teamspace.'</span>, <span class="t-n">401</span>);
     <span class="t-k">return</span> <span class="t-k">this</span>.verify(header.slice(<span class="t-n">7</span>), audience);
@@ -2065,8 +2040,8 @@ responseMode: 'json' drops mid-call notifications. subscriptions/listen streams 
 
   <div class="panel sim" id="sim-token"><div class="panel-hd"><h3 class="ph">Interactive · Would this token get through?</h3></div><div class="panel-bd">
     <div class="fields">
-      <label class="field">Who is checking<select id="tk-verifier"><option value="teamspace">MCP endpoint (expects aud teamspace)</option><option value="tasks">Tasks API (expects aud tasks)</option><option value="knowledge">Knowledge API (expects aud knowledge)</option></select></label>
-      <label class="field">Token audience<select id="tk-aud"><option value="teamspace">teamspace</option><option value="tasks">tasks</option><option value="knowledge">knowledge</option><option value="other">some-other-service</option></select></label>
+      <label class="field">Who is checking<select id="tk-verifier"><option value="mcp">MCP endpoint (expects aud &lt;origin&gt;/mcp)</option><option value="tasks">Tasks API (expects aud tasks)</option><option value="knowledge">Knowledge API (expects aud knowledge)</option></select></label>
+      <label class="field">Token audience<select id="tk-aud"><option value="mcp">&lt;origin&gt;/mcp</option><option value="tasks">tasks</option><option value="knowledge">knowledge</option><option value="other">some-other-service</option></select></label>
       <label class="field">Signature<select id="tk-sig"><option value="ok">valid</option><option value="bad">tampered</option></select></label>
       <label class="field">Issuer<select id="tk-iss"><option value="ok">this server</option><option value="bad">someone else</option></select></label>
       <label class="field">Age<select id="tk-exp"><option value="ok">3 minutes old</option><option value="bad">20 minutes old</option></select></label>
@@ -2084,7 +2059,7 @@ responseMode: 'json' drops mid-call notifications. subscriptions/listen streams 
 → <span class="t-n">302</span> &lt;issuer&gt;/callback?code=&lt;one-time&gt;&amp;iss=&lt;issuer&gt;&amp;state=…</code></pre></div></li><li data-lane="host" data-badge="token request" data-tone="server"><p class="st">The client redeems the code</p><p class="sd">It sends the verifier and the <code>resource</code> it wants the token for. The code is valid for 60 seconds and is deleted the moment it is read, so a replay finds nothing.</p><div class="fr from-host"><p class="frame-tag from-host">POST /token · from src/auth.ts</p><pre class="frame-json from-host" tabindex="0"><code><span class="t-k">POST</span> /token
 { <span class="t-s">"grant_type"</span>:<span class="t-s">"authorization_code"</span>, <span class="t-s">"code"</span>:<span class="t-s">"…"</span>,
   <span class="t-s">"client_id"</span>:<span class="t-s">"teamspace-host"</span>, <span class="t-s">"redirect_uri"</span>:<span class="t-s">"&lt;issuer&gt;/callback"</span>,
-  <span class="t-s">"resource"</span>:<span class="t-s">"&lt;issuer&gt;/mcp"</span>, <span class="t-s">"code_verifier"</span>:<span class="t-s">"…"</span> }</code></pre></div></li><li data-lane="auth" data-badge="issuer rules" data-tone="prod"><p class="st">The issuer checks the verifier against the challenge</p><p class="sd">It hashes what the client sent and compares it with what it stored at step 4. If the code was stolen in transit, the thief does not have the verifier.</p><div class="fr from-prod"><p class="frame-tag from-prod">response · from src/auth.ts</p><pre class="frame-json from-prod" tabindex="0"><code>{ <span class="t-p">"access_token"</span>:<span class="t-s">"&lt;HS256 JWT, aud teamspace, 15 min&gt;"</span>, <span class="t-p">"token_type"</span>:<span class="t-s">"Bearer"</span>, <span class="t-p">"expires_in"</span>:<span class="t-n">900</span> }</code></pre></div></li><li data-lane="mcp" data-badge="MCP frame" data-tone="server"><p class="st">Now the call goes through</p><p class="sd">The server verifies signature, issuer, audience and expiry, finds an active member, and builds a server for this one request.</p><div class="fr from-host"><p class="frame-tag from-host">POST /mcp · Authorization: Bearer …</p><pre class="frame-json from-host" tabindex="0"><code><span class="t-k">POST</span> /mcp
+<span class="t-s">"resource"</span>:<span class="t-s">"&lt;issuer&gt;/mcp"</span>, <span class="t-s">"code_verifier"</span>:<span class="t-s">"…"</span> }</code></pre></div></li><li data-lane="auth" data-badge="issuer rules" data-tone="prod"><p class="st">The issuer checks the verifier against the challenge</p><p class="sd">It hashes what the client sent and compares it with what it stored at step 4. If the code was stolen in transit, the thief does not have the verifier.</p><div class="fr from-prod"><p class="frame-tag from-prod">response · from src/auth.ts</p><pre class="frame-json from-prod" tabindex="0"><code>{ <span class="t-p">"access_token"</span>:<span class="t-s">"&lt;HS256 JWT, aud &lt;issuer&gt;/mcp, 15 min&gt;"</span>, <span class="t-p">"token_type"</span>:<span class="t-s">"Bearer"</span>, <span class="t-p">"expires_in"</span>:<span class="t-n">900</span> }</code></pre></div></li><li data-lane="mcp" data-badge="MCP frame" data-tone="server"><p class="st">Now the call goes through</p><p class="sd">The server verifies signature, issuer, audience and expiry, finds an active member, and builds a server for this one request.</p><div class="fr from-host"><p class="frame-tag from-host">POST /mcp · Authorization: Bearer …</p><pre class="frame-json from-host" tabindex="0"><code><span class="t-k">POST</span> /mcp
 <span class="t-p">Authorization</span>: Bearer &lt;token&gt;
 <span class="t-p">MCP-Protocol-Version</span>: 2026-07-28
 <span class="t-p">Mcp-Method</span>: tools/list</code></pre></div></li></ol></div></div>
@@ -2171,7 +2146,7 @@ responseMode: 'json' drops mid-call notifications. subscriptions/listen streams 
   <div class="cap"><b>src/auth.ts</b><span>requireToken(): the edge check</span></div><pre class="code server" tabindex="0"><code><span class="t-k">export</span> <span class="t-k">function</span> requireToken(
   identity: Identity,
   origin: string,
-  audience = <span class="t-s">'teamspace'</span>,
+  audience = origin + <span class="t-s">'/mcp'</span>,
 ): RequestHandler {
   <span class="t-k">return</span> <span class="t-k">async</span> (req, res, next) =&gt; {
     <span class="t-k">try</span> {
@@ -2505,7 +2480,7 @@ app.post(<span class="t-s">'/api/publish'</span>, <span class="t-k">async</span>
   <p class="lede">A stale write is a conflict, not a 500. Getting the name of a failure right is what lets a caller decide what to do next.</p>
 
   <p>Every failure a product API can raise is a <code>Fault</code> with four fields: a stable <code>code</code>, a message safe to show, an HTTP status, and a <code>retryable</code> flag. The complete set in the code is small enough to read in one go, and worth doing, because a caller’s whole recovery strategy hangs off it.</p>
-  <div class="tbl-wrap"><table><thead><tr><th scope="col">Code</th><th scope="col">Status</th><th scope="col">Retryable</th><th scope="col">What it means</th></tr></thead><tbody><tr><th scope="row" class="lbl"><code>UNAUTHORIZED</code></th><td>401</td><td>no</td><td>No valid token, or the member is gone</td></tr><tr><th scope="row" class="lbl"><code>FORBIDDEN</code></th><td>403</td><td>no</td><td>Your role cannot do this (a viewer writing)</td></tr><tr><th scope="row" class="lbl"><code>PLAN_REQUIRED</code></th><td>403</td><td>no</td><td>Your plan lacks the feature. Data permissions unchanged</td></tr><tr><th scope="row" class="lbl"><code>APPROVAL_REQUIRED</code></th><td>403</td><td>no</td><td>No valid approval for this exact operation</td></tr><tr><th scope="row" class="lbl"><code>NOT_FOUND</code></th><td>404</td><td>no</td><td>Not in your team. Says the same for &ldquo;absent&rdquo; and &ldquo;not yours&rdquo;</td></tr><tr><th scope="row" class="lbl"><code>CONFLICT</code></th><td>409</td><td>no</td><td>The version changed. Reload, then decide again</td></tr><tr><th scope="row" class="lbl"><code>IDEMPOTENCY_CONFLICT</code></th><td>409</td><td>no</td><td>Key reused with different arguments</td></tr><tr><th scope="row" class="lbl"><code>OUTCOME_UNKNOWN</code></th><td>409</td><td>no</td><td>Key claimed, no recorded result. Inspect before acting</td></tr><tr><th scope="row" class="lbl"><code>INVALID_INPUT</code>, <code>INVALID_ASSIGNEE</code></th><td>400</td><td>no</td><td>The arguments are wrong</td></tr><tr><th scope="row" class="lbl"><code>DEPENDENCY_UNAVAILABLE</code></th><td>503</td><td><strong>yes</strong></td><td>The product API could not be reached</td></tr><tr><th scope="row" class="lbl"><code>DEADLINE</code></th><td>504</td><td>no</td><td>The overall time budget ran out</td></tr></tbody></table></div>
+  <div class="tbl-wrap"><table><thead><tr><th scope="col">Code</th><th scope="col">Status</th><th scope="col">Retryable</th><th scope="col">What it means</th></tr></thead><tbody><tr><th scope="row" class="lbl"><code>UNAUTHORIZED</code></th><td>401</td><td>no</td><td>No valid token, or the member is gone</td></tr><tr><th scope="row" class="lbl"><code>FORBIDDEN</code></th><td>403</td><td>no</td><td>Your role cannot do this (a viewer writing)</td></tr><tr><th scope="row" class="lbl"><code>PLAN_REQUIRED</code></th><td>403</td><td>no</td><td>Your plan lacks the feature. Data permissions unchanged</td></tr><tr><th scope="row" class="lbl"><code>APPROVAL_REQUIRED</code></th><td>403</td><td>no</td><td>No valid approval for this exact operation</td></tr><tr><th scope="row" class="lbl"><code>NOT_FOUND</code></th><td>404</td><td>no</td><td>Not in your team. Says the same for &ldquo;absent&rdquo; and &ldquo;not yours&rdquo;</td></tr><tr><th scope="row" class="lbl"><code>CONFLICT</code></th><td>409</td><td>no</td><td>The version changed. Reload, then decide again</td></tr><tr><th scope="row" class="lbl"><code>IDEMPOTENCY_CONFLICT</code></th><td>409</td><td>no</td><td>Key reused with different arguments</td></tr><tr><th scope="row" class="lbl"><code>OPERATION_IN_PROGRESS</code></th><td>409</td><td><strong>yes</strong></td><td>A concurrent call owns this key. Retry after it finishes</td></tr><tr><th scope="row" class="lbl"><code>INVALID_INPUT</code>, <code>INVALID_ASSIGNEE</code></th><td>400</td><td>no</td><td>The arguments are wrong</td></tr><tr><th scope="row" class="lbl"><code>DEPENDENCY_UNAVAILABLE</code></th><td>503</td><td><strong>yes</strong></td><td>The product API could not be reached</td></tr><tr><th scope="row" class="lbl"><code>DEADLINE</code></th><td>504</td><td>no</td><td>The overall time budget ran out</td></tr></tbody></table></div>
   <p>Two rows are worth a second look. <code>NOT_FOUND</code> is doing double duty on purpose. And there is exactly one retryable failure in the request path, a dependency that could not be reached, because that is the only kind of failure in which trying the <em>identical</em> request again has a real chance of a different answer.</p>
 
   <h3>The retry policy</h3>
@@ -2558,7 +2533,7 @@ app.post(<span class="t-s">'/api/publish'</span>, <span class="t-k">async</span>
 }</code></pre></div>
   <p>It says <code>CONFLICT</code>, with a message telling the caller what to do: reload. A generic 500 would tell it nothing.</p>
 
-  <div class="callout ok"><span class="tag">Fixed in this repo</span><p><strong>A definite failure releases the operation key.</strong> The claim on a key is written <em>before</em> the work runs and completed <em>after</em> it succeeds. An earlier version left the claim open when the work threw an ordinary, well-understood failure (a stale version, a missing approval), exactly as if the process had crashed. A retry with that key was then told <code>OUTCOME_UNKNOWN</code> although nothing had been written. <code>once()</code> now tells the two cases apart:</p></div>
+  <div class="callout ok"><span class="tag">Fixed in this repo</span><p><strong>The idempotency claim and product write are atomic.</strong> <code>once()</code> now opens one database transaction and passes that transaction into the product write. The claim, the task or page mutation, approval consumption, and the stored result commit together. Any thrown error or process failure before commit rolls all of them back.</p></div>
   <div class="cap"><b>src/policy.ts</b><span>once(): what happens when the work throws</span></div><pre class="code prod" tabindex="0"><code><span class="t-k">let</span> result: T;
 <span class="t-k">try</span> {
   result = <span class="t-k">await</span> work();
@@ -2572,7 +2547,7 @@ publish again, same key, VALID approval =&gt; OK …
 stale update (version 1) =&gt; CONFLICT
 retry same key, same args =&gt; CONFLICT
 retry same key, reloaded version =&gt; OK …</code></pre></div>
-  <p>Read the lines together. A refused publish no longer burns its key. A stale update answers <code>CONFLICT</code> every time it is repeated, which is a definite answer, where it used to drift into <code>OUTCOME_UNKNOWN</code>. And with the reloaded version and the same key, the update goes through. The rule for a client is simpler now: after a timeout, retry with the same key. After a clear refusal, correct the call and send it again. Only an error the code cannot classify, such as a dropped connection, keeps the claim and produces <code>OUTCOME_UNKNOWN</code>, and that is the one case where you must look before you act. Three tests pin all of this: <code>a refused write releases its key</code>, <code>publishing without an approval does not burn the operation key</code>, and <code>an unclassified failure keeps the claim</code>.</p>
+  <p>Read the lines together. A refused publish does not burn its key or consume an approval. A stale update answers <code>CONFLICT</code> every time it is repeated. After a timeout, retry with the same key: a committed operation returns its stored result, while a transaction that never committed can run cleanly. A concurrent duplicate may briefly return retryable <code>OPERATION_IN_PROGRESS</code>. The tests cover refused writes, approvals, rollback after an injected failure, and replay after commit.</p>
 
   <div class="callout"><span class="tag">Three ids, three jobs</span><p>A JSON-RPC <em>request id</em> pairs one answer with one question on a connection. It changes every call and means nothing to a retry. The <em>operation key</em> is what makes a write repeat-safe, and the caller chooses it. The <em>trace id</em> ties an answer to an audit row, and the server creates it. The request id is not an idempotency key. Do not reuse one as the other.</p></div>
   <p>The <code>CircuitBreaker</code> beside <code>retry()</code> stops calling a dependency that keeps failing. It is now wired into <code>Downstream</code>: one breaker per product API, shared by every request the process serves. It counts only outages (a connection that cannot be made, a 5xx, a blown deadline), never a definite answer such as <code>NOT_FOUND</code>, so a run of refusals cannot open the circuit. MCP 103 Chapter 05 walks through it.</p>
@@ -2593,7 +2568,7 @@ retry same key, reloaded version =&gt; OK …</code></pre></div>
   </div></div>
 
   <h3>What the tests pin down</h3>
-  <p>The suite is fifteen tests. Each one guards a claim this course made. Read them as the course in executable form.</p>
+  <p>The suite guards the claims this course makes. Read the tests as the course in executable form; the runner reports the current count.</p>
   <div class="run"><div class="run-hd"><span>Captured run</span><span>captured 2026-09-20, Node 26.7</span></div><pre tabindex="0"><code><span class="t-k">$ </span>npm test
 ✔ an unreachable product API opens the circuit, and calls stop reaching it
 ✔ a definite refusal from a healthy dependency is not an outage
@@ -2605,7 +2580,7 @@ retry same key, reloaded version =&gt; OK …</code></pre></div>
 ✔ the /mcp edge answers 401 with a WWW-Authenticate challenge, never a 500
 ✔ a refused write releases its key, so the same key can be used again
 ✔ publishing without an approval does not burn the operation key
-✔ an unclassified failure keeps the claim, because the outcome really is unknown
+✔ a failed transaction rolls back both the write and its claim
 ✔ a completed operation is replayed and its work is not run twice
 ✔ MCP discovery, tool call and resource read work end to end
 ✔ production refuses to start without its required settings, and says which is missing
@@ -2613,7 +2588,7 @@ retry same key, reloaded version =&gt; OK …</code></pre></div>
 ℹ tests 15
 ℹ pass 15
 ℹ fail 0</code></pre></div>
-  <div class="tbl-wrap"><table><thead><tr><th scope="col">Test</th><th scope="col">The claim</th><th scope="col">Chapter</th></tr></thead><tbody><tr><th scope="row" class="lbl">tenant and team scope</th><td>Alice cannot read <code>task-secret</code>; Sam cannot read <code>task-1</code>. Both are <code>NOT_FOUND</code></td><td>01, 07</td></tr><tr><th scope="row" class="lbl">viewer cannot mutate</th><td>A viewer’s write fails with <code>FORBIDDEN</code></td><td>09</td></tr><tr><th scope="row" class="lbl">idempotency</th><td>Same key and arguments return the same task; changed arguments raise <code>IDEMPOTENCY_CONFLICT</code></td><td>02</td></tr><tr><th scope="row" class="lbl">optimistic version</th><td>A stale write raises <code>CONFLICT</code></td><td>11</td></tr><tr><th scope="row" class="lbl">approval binding</th><td>An approval covers one exact operation for one actor, once</td><td>09</td></tr><tr><th scope="row" class="lbl">MCP end to end</th><td>Discovery, a tool call and a resource read work through a real client and server</td><td>02, 04, 05</td></tr><tr><th scope="row" class="lbl">the /mcp edge</th><td>A missing, garbage, wrong-audience or wrong-issuer token gets 401 with a <code>WWW-Authenticate</code> challenge, never a 500</td><td>07</td></tr><tr><th scope="row" class="lbl">a refused write releases its key</th><td>After a stale version, the same key can be used with the reloaded version</td><td>11</td></tr><tr><th scope="row" class="lbl">publishing without an approval</th><td>A refused publish does not burn the key; the same key works once approved</td><td>09, 11</td></tr><tr><th scope="row" class="lbl">an unclassified failure</th><td>A failure the code cannot classify keeps the claim, so the outcome stays unknown</td><td>11</td></tr><tr><th scope="row" class="lbl">a completed operation is replayed</th><td>Repeating a finished operation returns the stored result and runs the work once</td><td>02</td></tr><tr><th scope="row" class="lbl">a refused resource read</th><td>A page that is missing, in another team or in another organisation all answer with the same not-found error and the URI</td><td>04</td></tr><tr><th scope="row" class="lbl">an unreachable product API</th><td>Repeated outages open the circuit and calls stop reaching the dependency; a definite refusal never does</td><td>11</td></tr><tr><th scope="row" class="lbl">production configuration</th><td>In production the server refuses to start without <code>DATABASE_URL</code>, <code>TOKEN_SECRET</code> and <code>PUBLIC_ORIGIN</code></td><td>—</td></tr></tbody></table></div>
+  <div class="tbl-wrap"><table><thead><tr><th scope="col">Test</th><th scope="col">The claim</th><th scope="col">Chapter</th></tr></thead><tbody><tr><th scope="row" class="lbl">tenant and team scope</th><td>Alice cannot read <code>task-secret</code>; Sam cannot read <code>task-1</code>. Both are <code>NOT_FOUND</code></td><td>01, 07</td></tr><tr><th scope="row" class="lbl">viewer cannot mutate</th><td>A viewer’s write fails with <code>FORBIDDEN</code></td><td>09</td></tr><tr><th scope="row" class="lbl">idempotency</th><td>Same key and arguments return the same task; changed arguments raise <code>IDEMPOTENCY_CONFLICT</code></td><td>02</td></tr><tr><th scope="row" class="lbl">optimistic version</th><td>A stale write raises <code>CONFLICT</code></td><td>11</td></tr><tr><th scope="row" class="lbl">approval binding</th><td>An approval covers one exact operation for one actor, once</td><td>09</td></tr><tr><th scope="row" class="lbl">MCP end to end</th><td>Discovery, a tool call and a resource read work through a real client and server</td><td>02, 04, 05</td></tr><tr><th scope="row" class="lbl">the /mcp edge</th><td>A missing, garbage, wrong-audience or wrong-issuer token gets 401 with a <code>WWW-Authenticate</code> challenge, never a 500</td><td>07</td></tr><tr><th scope="row" class="lbl">a refused write releases its key</th><td>After a stale version, the same key can be used with the reloaded version</td><td>11</td></tr><tr><th scope="row" class="lbl">publishing without an approval</th><td>A refused publish does not burn the key; the same key works once approved</td><td>09, 11</td></tr><tr><th scope="row" class="lbl">a failed transaction</th><td>An injected failure rolls back both the product write and its operation claim</td><td>02, 11</td></tr><tr><th scope="row" class="lbl">a completed operation is replayed</th><td>Repeating a finished operation returns the stored result and runs the work once</td><td>02</td></tr><tr><th scope="row" class="lbl">a refused resource read</th><td>A page that is missing, in another team or in another organisation all answer with the same not-found error and the URI</td><td>04</td></tr><tr><th scope="row" class="lbl">an unreachable product API</th><td>Repeated outages open the circuit and calls stop reaching the dependency; a definite refusal never does</td><td>11</td></tr><tr><th scope="row" class="lbl">production configuration</th><td>In production the server refuses to start without <code>DATABASE_URL</code>, <code>TOKEN_SECRET</code> and <code>PUBLIC_ORIGIN</code></td><td>—</td></tr></tbody></table></div>
   <h3>Break it on purpose</h3>
   <p>The best way to learn what a line is for is to delete it and see what fails. Before each, write down the test you expect to go red.</p>
   <ul>
@@ -2644,7 +2619,7 @@ retry same key, reloaded version =&gt; OK …</code></pre></div>
   <h2>Check yourself</h2>
   <p class="lede">Eight questions. The explanations matter more than the score. Each targets a misconception that is easy to walk away with.</p>
 
-  <div class="panel" data-w="quiz" data-src="qz-102"><div class="panel-hd"><h3 class="ph">Interactive · Knowledge check</h3><div class="qz-tools"><span class="qz-score" aria-live="polite">0 / 8</span><button class="btn ghost qz-reset" type="button">Start over</button></div></div><div class="panel-bd qz-body"></div><script type="application/json" id="qz-102">[{"q":"Where should team membership be enforced for a tool call?","o":["In the tool description, so the model knows","In the product layer, on every request, from the verified actor","Once when the connection opens"],"a":1,"w":"A description is prose and a model can ignore it. There is no connection to remember anything on in the stateless protocol. The product filters every query by the actor’s organisation and team each time."},{"q":"A model times out on \u003ccode>create_task\u003c/code> and retries with the same key and the same arguments. The first attempt did complete. What happens?","o":["A second task is created","The stored result comes back and no second task is made","The call fails with FORBIDDEN"],"a":1,"w":"\u003ccode>once()\u003c/code> finds the key, sees the same fingerprint, and returns the recorded result. Only if the process died between the write and recording the result would you get \u003ccode>OUTCOME_UNKNOWN\u003c/code>."},{"q":"Which of these tells a host that the \u003cem>request itself\u003c/em> was malformed?","o":["A result with isError true and a NOT_FOUND code","A JSON-RPC error object, like -32022 for an unsupported version","A result with total 0"],"a":1,"w":"A protocol error is an \u003ccode>error\u003c/code> object with no \u003ccode>result\u003c/code>. A tool that ran and refused is a result with \u003ccode>isError\u003c/code>. An empty list is a success."},{"q":"Why does the MCP server mint a fresh token for the Tasks API instead of forwarding the caller’s?","o":["To save bandwidth","A forwarded token has the wrong audience and would work anywhere it leaks to","The Tasks API cannot read tokens"],"a":1,"w":"Tokens are bound to an audience. The MCP token says \u003ccode>teamspace\u003c/code>; the Tasks API expects \u003ccode>tasks\u003c/code> and rejects anything else, which is the point."},{"q":"The \u003ccode>viewer\u003c/code> identity asks the host for an approval to publish. What does \u003ccode>approve()\u003c/code> do?","o":["Issues it, and the publish fails later","Refuses with FORBIDDEN before storing anything","Issues it, but for read access only"],"a":1,"w":"\u003ccode>approve()\u003c/code> starts by calling the same write check as every write. A viewer never obtains an approval to misuse."},{"q":"What does &ldquo;stateless MCP&rdquo; guarantee?","o":["The server has no database","Any healthy replica can answer any request","Every tool returns immediately"],"a":1,"w":"It removes hidden per-connection state. Databases, caches and long-running jobs all still exist, they are just not part of the MCP connection."},{"q":"A search returns \u003ccode>total: 0, items: []\u003c/code>. What should the host do?","o":["Retry, because it looks like a failure","Treat it as a successful, empty answer","Escalate to an administrator"],"a":1,"w":"An empty list is data. Retrying wastes capacity and treating it as an error hides that nothing was wrong."},{"q":"Sam calls \u003ccode>resources/read\u003c/code> on \u003ccode>teamspace://pages/page-1\u003c/code>, a platform page. What comes back?","o":["The page, because Sam is in the same organisation","A JSON-RPC error saying the page was not found in Sam’s team","An empty page"],"a":1,"w":"The read is authorised again at read time, by team. Resources have no \u003ccode>isError\u003c/code>, so the refusal is a JSON-RPC error (\u003ccode>-32602\u003c/code>, with the URI in \u003ccode>data\u003c/code>) carrying the message. The listing for Sam is empty as well."}]</script></div>
+  <div class="panel" data-w="quiz" data-src="qz-102"><div class="panel-hd"><h3 class="ph">Interactive · Knowledge check</h3><div class="qz-tools"><span class="qz-score" aria-live="polite">0 / 8</span><button class="btn ghost qz-reset" type="button">Start over</button></div></div><div class="panel-bd qz-body"></div><script type="application/json" id="qz-102">[{"q":"Where should team membership be enforced for a tool call?","o":["In the tool description, so the model knows","In the product layer, on every request, from the verified actor","Once when the connection opens"],"a":1,"w":"A description is prose and a model can ignore it. There is no connection to remember anything on in the stateless protocol. The product filters every query by the actor’s organisation and team each time."},{"q":"A model times out on \u003ccode>create_task\u003c/code> and retries with the same key and the same arguments. The first attempt did complete. What happens?","o":["A second task is created","The stored result comes back and no second task is made","The call fails with FORBIDDEN"],"a":1,"w":"\u003ccode>once()\u003c/code> finds the key, sees the same fingerprint, and returns the recorded result. A process failure before commit rolls back the write and claim; a response lost after commit is replayed."},{"q":"Which of these tells a host that the \u003cem>request itself\u003c/em> was malformed?","o":["A result with isError true and a NOT_FOUND code","A JSON-RPC error object, like -32022 for an unsupported version","A result with total 0"],"a":1,"w":"A protocol error is an \u003ccode>error\u003c/code> object with no \u003ccode>result\u003c/code>. A tool that ran and refused is a result with \u003ccode>isError\u003c/code>. An empty list is a success."},{"q":"Why does the MCP server mint a fresh token for the Tasks API instead of forwarding the caller’s?","o":["To save bandwidth","A forwarded token has the wrong audience and would work anywhere it leaks to","The Tasks API cannot read tokens"],"a":1,"w":"Tokens are bound to an audience. The MCP token says \u003ccode>&lt;origin&gt;/mcp\u003c/code>; the Tasks API expects \u003ccode>tasks\u003c/code> and rejects anything else, which is the point."},{"q":"The \u003ccode>viewer\u003c/code> identity asks the host for an approval to publish. What does \u003ccode>approve()\u003c/code> do?","o":["Issues it, and the publish fails later","Refuses with FORBIDDEN before storing anything","Issues it, but for read access only"],"a":1,"w":"\u003ccode>approve()\u003c/code> starts by calling the same write check as every write. A viewer never obtains an approval to misuse."},{"q":"What does &ldquo;stateless MCP&rdquo; guarantee?","o":["The server has no database","Any healthy replica can answer any request","Every tool returns immediately"],"a":1,"w":"It removes hidden per-connection state. Databases, caches and long-running jobs all still exist, they are just not part of the MCP connection."},{"q":"A search returns \u003ccode>total: 0, items: []\u003c/code>. What should the host do?","o":["Retry, because it looks like a failure","Treat it as a successful, empty answer","Escalate to an administrator"],"a":1,"w":"An empty list is data. Retrying wastes capacity and treating it as an error hides that nothing was wrong."},{"q":"Sam calls \u003ccode>resources/read\u003c/code> on \u003ccode>teamspace://pages/page-1\u003c/code>, a platform page. What comes back?","o":["The page, because Sam is in the same organisation","A JSON-RPC error saying the page was not found in Sam’s team","An empty page"],"a":1,"w":"The read is authorised again at read time, by team. Resources have no \u003ccode>isError\u003c/code>, so the refusal is a JSON-RPC error (\u003ccode>-32602\u003c/code>, with the URI in \u003ccode>data\u003c/code>) carrying the message. The listing for Sam is empty as well."}]</script></div>
   <p>If you missed a question, the chapter to reread is the one whose number appears in the explanation’s topic: identity in 07, failures in 03 and 11, approvals in 09, statelessness in 08.</p>
 
 </section>
@@ -2806,13 +2781,13 @@ function rows(tbody, list) { tbody.innerHTML = list.length ? list.map(function (
     var scoped = "acme:alice:" + key, hash = fingerprint({ op: "create_task", title: t, operationKey: key }), prior = S.ops[scoped];
     if (prior) {
       if (prior.fp !== hash) return say(v, "no", "IDEMPOTENCY_CONFLICT", "This operation key was already used with different arguments.");
-      if (prior.result === null) return say(v, "no", "OUTCOME_UNKNOWN", "Operation in progress or interrupted. Inspect its outcome before retrying.");
+      if (prior.result === null) return say(v, "warn", "OPERATION_IN_PROGRESS", "The original transaction is still running. Retry after it finishes.");
       return say(v, "ok", "replayed", "Returned the stored result " + prior.result[0] + ". No new row.");
     }
+    if (crash) return say(v, "warn", "transaction rolled back", "The simulated process failed before commit. No task or operation claim survived.");
     S.ops[scoped] = { fp: hash, result: null };
     var task = ["task-" + (S.n++), t]; S.tasks.push(task);
-    if (crash) { paint(); return say(v, "warn", "process crashed", task[0] + " was inserted, but the operation has no recorded result."); }
-    S.ops[scoped].result = task; say(v, "ok", "created", task[0] + " created and recorded.");
+    S.ops[scoped].result = task; say(v, "ok", "created", task[0] + " created and recorded in one commit.");
   }
   $("#once-send").addEventListener("click", function () { send($("#once-title").value, $("#once-key").value, $("#once-crash").checked); paint(); });
   $("#once-blank").addEventListener("click", function () { send("   ", $("#once-key").value, false); paint(); });
@@ -2919,7 +2894,7 @@ function rows(tbody, list) { tbody.innerHTML = list.length ? list.map(function (
     var o = op(), scoped = "acme:" + who + ":" + o.operationKey, hash = fingerprint(o), prior = A.ops[scoped];
     if (prior) {
       if (prior.fp !== hash) return say(v, "no", "IDEMPOTENCY_CONFLICT", "This operation key was already used with different arguments.");
-      if (prior.result === null) return say(v, "no", "OUTCOME_UNKNOWN", "Operation in progress or interrupted. Inspect its outcome before retrying.");
+      if (prior.result === null) return say(v, "warn", "OPERATION_IN_PROGRESS", "The original transaction is still running. Retry after it finishes.");
       return say(v, "ok", "replayed", "Returned the stored page " + prior.result[0] + ". The approval was not spent again.");
     }
     A.ops[scoped] = { fp: hash, result: null };
