@@ -517,7 +517,7 @@ figure{margin:0}
   <div class="aud-intro" id="aud-intro">
     <button class="btn" id="aud-start">▶ Listen straight through</button>
     <button class="vsw" id="vsw" type="button" role="switch"
-            aria-checked="false" data-go="kokoro.html" title="Switch narration voice">
+            aria-checked="true" data-go="index.html" title="Switch narration voice">
       <span class="vsw-lbl vsw-a">Anuj</span>
       <span class="vsw-track"><span class="vsw-knob"></span></span>
       <span class="vsw-lbl vsw-b">AI</span>
@@ -2744,24 +2744,24 @@ function fingerprint(v) { return sha256(JSON.stringify(canonical(v))); }
 
 /* AUDIO-MANIFEST:BEGIN · written by tools/generate-audio.py · do not hand-edit */
 var AUDIO = {
-  dir: "audio-qwen/",
-  voice: "Anuj Sadani",
-  credit: "Read by Anuj Sadani",
+  dir: "audio-kokoro/",
+  voice: "bm_george+bm_fable",
+  credit: "Synthetic voice, Kokoro-82M",
   tracks: {
-    ch00: { f: "ch00.mp3", d: 124.9 },
-    ch01: { f: "ch01.mp3", d: 136.2 },
-    ch02: { f: "ch02.mp3", d: 134.2 },
-    ch03: { f: "ch03.mp3", d: 136.3 },
-    ch04: { f: "ch04.mp3", d: 126.5 },
-    ch05: { f: "ch05.mp3", d: 133.1 },
-    ch06: { f: "ch06.mp3", d: 131.7 },
-    ch07: { f: "ch07.mp3", d: 170.9 },
-    ch08: { f: "ch08.mp3", d: 163.4 },
-    ch09: { f: "ch09.mp3", d: 163.6 },
-    ch10: { f: "ch10.mp3", d: 168.2 },
-    ch11: { f: "ch11.mp3", d: 175.0 },
-    ch12: { f: "ch12.mp3", d: 128.8 },
-    ch13: { f: "ch13.mp3", d: 69.3 }
+    ch00: { f: "ch00.mp3", d: 113.5 },
+    ch01: { f: "ch01.mp3", d: 119.8 },
+    ch02: { f: "ch02.mp3", d: 117.4 },
+    ch03: { f: "ch03.mp3", d: 118.4 },
+    ch04: { f: "ch04.mp3", d: 117.0 },
+    ch05: { f: "ch05.mp3", d: 119.4 },
+    ch06: { f: "ch06.mp3", d: 120.1 },
+    ch07: { f: "ch07.mp3", d: 146.6 },
+    ch08: { f: "ch08.mp3", d: 145.6 },
+    ch09: { f: "ch09.mp3", d: 143.3 },
+    ch10: { f: "ch10.mp3", d: 150.2 },
+    ch11: { f: "ch11.mp3", d: 153.8 },
+    ch12: { f: "ch12.mp3", d: 120.2 },
+    ch13: { f: "ch13.mp3", d: 63.8 }
   }
 };
 /* AUDIO-MANIFEST:END */
