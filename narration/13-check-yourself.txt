@@ -1,0 +1,9 @@
+Chapter thirteen. Check yourself.
+
+Use the eight questions on screen. The explanations matter more than the score, because each question targets a misconception that is easy to walk away with.
+
+The theme running through the course is ownership. The host owns the conversation and the approval screen. The MCP server owns the contract. The product owns the rules. The database owns the last line of defence. If a rule would still be enforced after you deleted the MCP server, it is in the right place.
+
+Remember the small facts too. A tenant comes from the token and the members table, never from the request. A missing row and a forbidden row both say not found. A tool description is a request, and only the schema and the product enforce anything. An empty result is an answer, and not a failure. And an operation key is what makes a write safe to repeat, but only for seven days.
+
+If any answer feels uncertain, go back to the chapter it names, and step through the frames again.

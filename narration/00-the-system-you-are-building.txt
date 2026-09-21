@@ -1,0 +1,13 @@
+Chapter zero. The system you are building.
+
+MCP one oh one explained the protocol with a weather tool that does not exist. This course replaces it with a system you can run, break, and read. It is called Teamspace, and it is a small task tracker with a knowledge base of Markdown pages. About five hundred lines of TypeScript. It needs no model key and no cloud account.
+
+Look at the diagram on the page. There is a host, which drives the conversation. There is an MCP server. Behind it sit two product APIs, one for tasks and one for knowledge. And under them, a Postgres database. The MCP layer never reads the tables itself. It asks a product API, and the product API asks the database.
+
+That gives four owners, and the whole course is about keeping them apart. The host owns the conversation, the model connection, and the approval screen. The MCP server owns the contract: tool names, schemas, resources, and prompts. The product APIs own the rules: who may read what, which writes are allowed, what a stale version means. And the database owns the last line of defence, with constraints and versions that hold even if every layer above has a bug.
+
+The mistakes that hurt in production are almost always one layer quietly doing another layer's job.
+
+There are five seeded identities, and each exists to make one boundary visible. Alice is an admin on the pro plan, and is the default. Bob is a second member on the same team. Viewer sees the same data, but read only. Sam is in the same organisation, but on a different team. And Eve belongs to a completely different organisation, on the free plan.
+
+Use the identity switcher on the page and watch what each person can see. These are teaching tokens from a teaching issuer. They are never an Internet-facing login.

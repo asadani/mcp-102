@@ -1,0 +1,15 @@
+Chapter eight. Stateless handlers.
+
+Stateless means a request can land on any healthy instance and get the same answer. It does not mean there is no state anywhere.
+
+Before the twenty twenty-six protocol revision, a connection had a session: a handshake, negotiated capabilities, and an identifier the server held on to. That is hard to run behind a load balancer, because request two has to find the same replica that saw request one. The stateless design removes the problem by removing the session. Every request says everything the server needs.
+
+The handler shows it as a contract. The factory receives one request, builds a server from that request's identity, and the server is thrown away after the response. There is nowhere for state to accumulate. The protocol version and client capabilities travel with every call. Even the discovery answer says how long it may be cached, and by whom: zero milliseconds, private. Nothing there may be shared or reused.
+
+Use the two replica panel. Send requests, and the balancer picks a replica at random. In this design every request works wherever it lands. In the legacy design, a session lives on whichever replica took the first request, and later requests only find it if they land there again.
+
+Then the table of what stateless does not mean. It does not mean no database: members, tasks, pages, operations, approvals, audit, and usage all live in Postgres. It does not mean no caching, but correctness must never depend on a cache being warm, shared, or even present. It does not mean no long work, because durable jobs are a separate pattern, coming in MCP one oh three. And it does not mean no user state. A person's data is state. It is just not held in the connection.
+
+There is one honest exception. The local authorisation server keeps its one time codes in memory inside the process. Behind two replicas, the token call could land on a replica that never saw the authorize call. That is fine for a development issuer, and it is exactly the kind of hidden state to look for on the way to production.
+
+Here is the check to run on your own server. Take any request, replay it on a freshly started replica that has never seen this caller, and see whether the answer is the same. If it is, you are stateless where it matters.

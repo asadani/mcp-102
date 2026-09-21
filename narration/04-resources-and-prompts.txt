@@ -1,0 +1,13 @@
+Chapter four. Resources and prompts.
+
+Tools do things. Resources hold reference material. Prompts package a way to begin. And neither of the last two should quietly change anything.
+
+The three differ in who decides when they are used, and that decision is the reason to pick one. The model decides to use a tool, in the middle of a conversation. The application decides to load a resource into context. The user decides to start from a prompt. So a team handbook the app might attach is a resource. Prepare weekly triage is a prompt the user selects. And close this task is a tool. Putting a handbook behind a tool makes the model spend a call to read something the host could have supplied for free.
+
+Teamspace registers pages as a resource with a URI template. The list only shows pages that person may read, and the read checks the caller again. That matters, because a resource address is only a name. Knowing the name proves nothing. So authorisation runs twice, at list time and again at read time.
+
+Look at the captured callers on the page. Sam is in the same organisation but a different team. Sam's list is empty, with no error. And when Sam guesses the address, the read is refused with an invalid params error, the same error whether the page is missing or simply not Sam's. It used to come back as internal error, which a host could not tell from a crash.
+
+Now the prompt. It returns messages. Nothing has run. And the draft is embedded in a sentence that calls it untrusted, because text pasted into a prompt is still data.
+
+That makes a prompt the most quietly dangerous primitive, because it looks like plain text. It says never publish without approval, but that is a request. What actually blocks an unapproved publish is the approval check in the product. Instruction text never enforces anything.

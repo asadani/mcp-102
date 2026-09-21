@@ -1,0 +1,15 @@
+Chapter seven. Per-request identity.
+
+A stateless handler has to rebuild the same security context on every call. Nothing is remembered between requests, because there is no session to remember it in.
+
+Two questions are easy to run together, so keep them apart. Authentication asks: is this token genuine, unexpired, and meant for this service? Authorisation asks: may this person do this thing to this row? Teamspace does the first at the door, and the second in the product, on every request.
+
+Now, two tokens, never one. The token the host sends to the MCP server has the server's own address as its audience. The server does not pass it on. To call the tasks API, it mints a new token for that API alone, good for fifteen minutes. A token that works everywhere is a token that, once leaked or forwarded, works everywhere. The panel lets you change the audience, the signature, the issuer, and the age, and watch which combinations get through.
+
+Every failure, whatever the cause, becomes one identical unauthorized answer. The caller learns nothing about which check failed. And a valid token is not enough. The person must still be an active member. Deactivate Bob, and his unexpired token stops working on the next request.
+
+Then the local sign in flow, with P.K.C.E. The client reads the server's metadata to learn where to sign in. It invents a secret, and sends only its hash. The authorisation server checks every field, and never redirects to an address it was not told about. The code it hands back lives for sixty seconds and is deleted the moment it is read. When the client redeems it, the issuer hashes the secret and compares. A stolen code is useless without the secret.
+
+Be clear about what this is not. The authorize route takes the person straight from the query string, so anyone who reaches it can become anyone. That is fine for teaching, and it is why the route is only mounted outside production. Production uses a real identity provider, and only the verification half of this code.
+
+One fix worth knowing. The server used to check the token inside the handler factory, and the software development kit reports any throw from there as a five hundred. A missing token got no challenge, so a client never learned where to sign in. The check now runs first, in Express, and answers four hundred and one with a challenge. It only checks the token. It still authorises nothing.

@@ -1,0 +1,13 @@
+Chapter three. Schemas and validation.
+
+Three different things can go wrong with a call, and each has a different shape on the wire. A host that flattens them into the word error will make worse decisions.
+
+First, the schema. The search contract bounds everything a caller controls: the length of the query, the offset, the page size, and the allowed statuses. That is not pedantry. A tool description is prose, and a model can ignore prose. The schema is the only part of the contract that is enforced, so anything that matters has to be in it. Defaults make life easier for the model, and bounds protect the server, so nobody can ask for a million rows.
+
+Now the three kinds of failure. A protocol error is a JSON-RPC error with a numeric code and no result at all. It is found before any tool logic runs, and the client should never retry it, because the request itself is malformed. A tool execution error is a result marked as an error, with content the model can read. Whether to retry depends on the code and the retryable flag inside it. And an empty result is not a failure. It is a normal answer that says zero matches.
+
+Hold onto that last one. If a host treats zero results as an error, it will retry and apologise and confuse the user. The reverse is worse: treating not found as an empty list hides that the caller asked about something they may not see.
+
+Use the classifier on the page. Six real captured answers, and you sort each one. Notice that the software development kit's own validation messages have no code, no retryable flag, and no trace id, while this server's own refusals have all three.
+
+The rule is simple. Classify a failure where it starts. Keep a stable machine code. Keep the human message safe to show. And let the host decide what to do from the code, never by parsing the sentence.

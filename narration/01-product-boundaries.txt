@@ -1,0 +1,15 @@
+Chapter one. Product boundaries.
+
+Where should MCP end, and product code begin? At the point where a rule stops being about the protocol.
+
+A tool handler is easy to write, and easy to get wrong in one particular way: it grows. First it validates. Then it checks a permission. Then it applies a business rule. Then it queries a table. A year later your MCP server is a second backend with its own copy of the rules, and the web app and the tool disagree about who may close a task.
+
+Teamspace avoids that by making the MCP file an adapter. Its handler does three things and nothing else. It works out who is calling. It forwards the request to a product API. And it wraps the answer as MCP content. The rules live in the product code, where the web interface reaches them too. If both paths call the same function, they cannot drift apart.
+
+Step through the create task panel. The model proposes a call, and changes nothing. The host decides whether to send it. The server looks the caller up in the members table. Then it mints a brand new fifteen minute token, for the tasks API only. The caller's own token is not forwarded. The product enforces the rules, and the database writes exactly one row.
+
+Now notice where the tenant came from. The request carried a title and a key. It carried no organisation and no team. Those came from the member's row, and every query filters on them. That is the whole tenant model, and it is why a caller cannot ask for someone else's data by naming it.
+
+Every input schema is strict. If you add an org field to a call, it is refused before any product code runs. And a task that belongs to another team says not found, not forbidden, so the answer never confirms the row exists.
+
+Here is the design test. If you deleted the MCP server tomorrow, would this rule still be enforced? If not, it is in the wrong place.

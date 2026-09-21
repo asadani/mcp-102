@@ -1,0 +1,13 @@
+Chapter six. Two transports.
+
+A transport changes how bytes move and how a process lives. It should not change what a tool means.
+
+Teamspace serves one server through two doors. The dev script serves Streamable HTTP, for remote callers, many at once. The stdio script serves the same server over standard input and output, for one local caller. Both build the server with the same function, so the tool list is identical, and so are the schemas, the policy checks, and the audit rows. What differs is everything around it.
+
+The comparison table on the page has the differences. HTTP is a long running service, with many callers on different networks, and each request is a self contained post. stdio is a child process started by the host, with exactly one caller on the same machine, and one message per line. On HTTP the caller is verified from a bearer token on every request. On stdio the subject simply comes from configuration at start up.
+
+That last point deserves a sentence. The fixed local subject is a lab convenience. It is fine for a child process you started yourself, and wrong for anything reachable over a network.
+
+Then the one rule of stdio. Standard output is the protocol. One stray log line, and the client's parser fails on something that is not JSON. It is the most common reason a first server shows no tools. Log to standard error. The page has a small panel where you can print one stray line and watch the real parser error.
+
+One more choice. The server answers in plain JSON, which suits a fleet of identical replicas, because every answer is one ordinary response. The software development kit is honest about the price: it drops notifications sent in the middle of a call. So this server cannot stream progress. A tool that takes thirty seconds needs the job pattern from MCP one oh three, not a longer response.

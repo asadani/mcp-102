@@ -1,0 +1,11 @@
+Chapter five. The reference host.
+
+A scripted host makes the protocol visible before a model makes behaviour unpredictable. This one is about twenty lines.
+
+A host is the application around the model. A production one has a chat interface, a model connection, memory, and a policy for what needs a human. Teamspace's host has none of that. It does the two things a host is really for: it speaks MCP to a server, and it keeps the decision to publish in front of a person. Everything the model would do is replaced by a fixture that is named as one.
+
+First, the client pins the protocol revision. It refuses to talk to anything else. A host that meets servers it does not control would negotiate instead. Then it works through frames you can step through on the page. It asks the server what it supports. There is no initialize handshake and no session, because every request carries its own version and client details. It lists the tools. The model's choice is a fixed fixture, labelled fixture tool selection, so the trace never implies reasoning that did not happen. It calls the search tool, and if that fails, the workflow stops instead of drafting from nothing. It reads the checklist resource. And it builds a draft, and stops. Nothing has been written.
+
+The last step is the point. Publish page is the only tool that needs consent, and the consent is a screen the host draws, in a place a model cannot reach. The server's part is to refuse without proof of it. Call it with no approval, and you get approval required. Invent an approval id, and you get the same answer. Whether a model obeys the tool description does not matter. The database row does.
+
+Swap the fixture for a real model and two things stay the same: the approval gate, and the rule that the host, not the model, requests the approval. Build the boring version first, so a protocol mistake shows up as a wrong frame, not as the AI doing something odd.

@@ -1,0 +1,13 @@
+Chapter ten. A cross-system workflow.
+
+Preparing a release note reads tasks, reads a document, and writes a page. The interesting question is who is in charge of that sequence.
+
+The workflow joins two systems. It finds the tasks completed for a release, reads the checklist page, drafts a note, and, only after a person agrees, writes it as a new page. Nothing here is exotic. The design question is where the sequencing lives, because there are three honest places to put it, and they behave very differently.
+
+The comparison table has them. The host can orchestrate, in code it controls. Every call shows in the trace, a failure points to the exact step, and the cost is several round trips you can measure. A composite tool can run a fixed script inside the server. That is one round trip, but opaque inside. Or an agent can run inside a tool, with a model deciding each step. That one is very opaque, and unbounded in cost unless you cap it. Teamspace keeps the host in charge, and the reason is not that composites are bad. Reasoning belongs where the person and the audit trail can see it. A composite is worth building later, once the sequence is boring enough to freeze.
+
+Step through the panel. A read only search for completed work. If it fails, the host stops, and never drafts from nothing. The rows come back with their ids, so the draft can cite sources. The host reads the checklist as the same caller. It builds a draft and stops, because a draft and a record are different things. A person reads the exact draft. The host requests an approval for that exact operation. And only then does it publish, once, and a second click with the same key returns the same page.
+
+Now notice something. The browser publishes through its own route, not through the MCP publish tool. Both end at the same product function. That is the design test from chapter one, working. A person clicking a button and a model calling a tool reach the same command, so they hit the same approval check.
+
+One last warning. Do not ask a server to call itself. A tool that calls back into its own MCP server adds a hop, a token exchange, and a failure mode, and buys nothing. If two steps live in the same product, call the product function. Use a second hop only when a genuinely separate boundary sits in between. MCP one oh three and one oh four return to that.

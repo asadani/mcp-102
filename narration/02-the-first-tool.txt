@@ -1,0 +1,15 @@
+Chapter two. The first tool.
+
+Create task is a narrow product capability with an honest schema and a stable outcome.
+
+A tool has three parts, and they do different jobs. The description tells the model when to use it. The schema tells the client what may be sent. The handler decides what happens. Most bad tools come from confusing them: a schema that is loose because the description says the right thing, or a description that hides a rule the schema could have enforced.
+
+The panel shows the tool from source to wire. The description names the one thing a model cannot guess: reuse the operation key only to retry the same operation. The schema is written once, in Zod, and the software development kit turns it into the JSON Schema a client receives. Nothing is written by hand twice. Trim and minimum length reject a title made of spaces, and strict refuses unknown keys.
+
+Then the call itself. The method is tools call. The tool name travels twice, once in the body and once in a header, so a gateway can route without parsing. The answer carries the task twice as well: as text for a model to read, and as structured content for code to consume.
+
+Now the important part. A model that times out will try again. If the first attempt did succeed, a naive retry makes a second task. So every write takes an operation key. The claim on that key, the product write, and the stored result all run in one database transaction, so they commit together or roll back together.
+
+Repeat the key with the same arguments, and you get the stored result. Reuse it with different arguments, and you get an idempotency conflict. A truly concurrent duplicate may briefly get a retryable in progress answer.
+
+Use the ledger on the page. Tick crash before commit, and neither the task nor the claim survives. Then send it again, and exactly one task appears.

@@ -1,0 +1,11 @@
+Chapter twelve. The release note capstone.
+
+A working demo should prove the boundaries and the failure paths, not only the happy one. Seven steps, and then a list of what you can now defend.
+
+Start the API and the interface, open the app page, and work through the walk on screen. Each step names the chapter whose idea it tests. Sign in as Alice and prepare a release note. Read each layer of the trace, and notice the model row says fixture, and nothing is written yet. Approve and publish exactly that operation. The approval is bound to the draft you approved. Confirm the new page appears in the knowledge base, because a person clicking and a model calling reach the same command.
+
+Then the negative cases, which matter more. Repeat as the viewer, and publishing must be refused, because the role check runs before an approval can even exist. Switch to Sam, and platform tasks and pages must not appear, because it is the same organisation but a different team. Switch to Eve, and only the rival organisation's row appears, because the tenant comes from the token, never the request.
+
+Then look at what the tests pin down. The suite guards every claim this course makes, so read it as the course in executable form. Tenant and team scope. A viewer cannot write. Idempotency, and optimistic versions. Approvals bound to one exact operation, for one person, once. A real client and server working end to end. The four hundred and one challenge at the edge, for a missing, garbage, wrong audience, or wrong issuer token. A refused write releasing its key. A failed transaction rolling back both the write and its claim. A refused resource read answering with the same not found error. An unreachable product API opening the circuit. And an operation key that stops replaying after seven days.
+
+If you can explain why each of those holds, and which layer owns it, you have understood the course.

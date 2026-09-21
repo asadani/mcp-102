@@ -1,0 +1,15 @@
+Chapter eleven. Failure semantics.
+
+A stale write is a conflict, not a five hundred. Getting the name of a failure right is what lets a caller decide what to do next.
+
+Every failure a product API raises is a fault with four fields: a stable code, a message safe to show, an HTTP status, and a retryable flag. The table on the page lists them, and a caller's whole recovery strategy hangs off it. Unauthorized, forbidden, plan required, approval required. Not found, which says the same for absent and not yours, on purpose. Conflict, meaning the version changed, so reload and decide again. Three are marked retryable: a dependency that could not be reached, a circuit that is open, and a duplicate that arrived while the original was still running. Those are the only cases where trying the identical request again has a real chance of a different answer.
+
+Now the retry policy, and it packs five rules. Only safe operations retry at all. A write gets one attempt. Only faults marked retryable retry. Each retry waits a random time, up to a cap that grows exponentially. That randomness is jitter, so a crowd of clients does not retry in lockstep. And everything lives inside one deadline, so a retry that could not finish in time is never started. Use the simulator to break each rule.
+
+Now the everyday failure. Update a task, then repeat the update with the version you already saw. The answer is conflict, with a message telling the caller to reload. A generic error would have told it nothing.
+
+And the idempotency guard is atomic. The claim on the key, the product write, the approval, and the stored result all commit together in one transaction. A crash before commit rolls everything back, and a lost response after commit is replayed from the stored result. A refused publish does not burn its key or spend its approval.
+
+But an operation key does not last forever. A maintenance sweep deletes operation records seven days after they were created. A retry inside the seven days is replayed. A retry after them is a brand new operation, and the write runs again. So a client must give up on a write long before a week has gone by.
+
+Last, three identifiers with three jobs. The request id pairs an answer with a question on one connection. The operation key makes a write safe to repeat, and the caller chooses it. The trace id ties an answer to an audit row. Never reuse one as another.

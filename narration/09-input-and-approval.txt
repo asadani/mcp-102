@@ -1,0 +1,15 @@
+Chapter nine. Input and approval.
+
+I need a project id, and may I publish this, are different pauses. Mixing them up is how an approval turns into a formality.
+
+A tool call can stall for two unrelated reasons, and each has a different owner. Missing input asks: what is the value of this field? I cannot build a valid call without it. Anyone who knows can answer, the user, or the host from context, and the answer needs no binding to anything. It is just information. Approval asks something else: you understand exactly what will happen, may I go ahead? Only someone with authority can answer, on a surface the model cannot touch, and the answer must be bound to the exact operation. Approve one thing, get exactly that thing.
+
+The current protocol has a way to ask for missing input in the middle of a call, a result that says input required. That is a good fit for which project. It is a poor fit for consent, because a generic protocol answer is not bound to a specific write, and a model can be persuaded to supply one. So Teamspace does not use it at all. Publication approval is a product rule, shown by the host.
+
+Here is how an approval is built. Asking for approval stores a hash of the exact operation, for that actor, valid for five minutes. Spending it is a single conditional update, marking it used, so it works once even when two requests race. And the approval id is removed from the operation before it is hashed, because an approval cannot vouch for itself.
+
+Now play with the simulator. Ask, then publish unchanged: it works, and the approval is spent. Change one character of the body: the hash no longer matches, so approval required. Present Alice's approval as Bob: refused, because approvals belong to the person who asked. Ask as the viewer: refused before anything is stored. Even the operation key is part of the hash, so approving one key does not license publishing under another.
+
+And a refusal costs nothing. If a publish is refused, the transaction rolls back, so neither the write nor the key is kept. You can ask for a fresh approval and publish again with the same key.
+
+That is also why an invented approval id is worthless. The real one is a row a host created, after a person looked at a screen and said yes.
