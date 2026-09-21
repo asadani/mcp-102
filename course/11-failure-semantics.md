@@ -11,3 +11,9 @@ messages; it is not an idempotency key.
 Product writes, their idempotency claim and the stored result share one database
 transaction. A crash before commit leaves none of them; a lost response after
 commit is resolved by replaying the same operation key.
+
+An operation key does not last forever. `cleanupOperationalData()` in `src/db.ts` deletes
+operation records seven days after they were created (audit rows after thirty days,
+rate-limit rows after one day). A retry inside the seven days is replayed; a retry after
+them is a new operation and the write runs again, so clients must stop retrying a write
+long before a week has passed. `tests/idempotency.test.ts` checks both sides of that line.
